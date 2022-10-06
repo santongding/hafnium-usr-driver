@@ -5,3 +5,6 @@
 .tmp_versions/
 Module.symvers
 modules.order
+vmlib
+*.cmd
+*.mod
