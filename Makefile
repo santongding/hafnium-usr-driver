@@ -20,11 +20,12 @@ ifneq ($(KERNELRELEASE),)
 
 obj-m += $(driver-name).o
 
+
 $(driver-name)-y += main.o
-$(driver-name)-y += vmlib/aarch64/hvc_call.o
+$(driver-name)-y += vmlib/aarch64/smc_call.o
 $(driver-name)-y += vmlib/ffa.o
 
-ccflags-y = -I$(HAFNIUM_PATH)/inc/vmapi -I$(M)/inc
+ccflags-y = -I$(HAFNIUM_PATH)/inc/vmapi -I$(M)/inc -I$(HAFNIUM_PATH)/usr-inc
 
 else
 
@@ -35,7 +36,7 @@ CHECKPATCH ?= $(KERNEL_PATH)/scripts/checkpatch.pl -q
 
 all:
 	cp -r $(HAFNIUM_PATH)/vmlib/ $(CURDIR)
-	make -C $(KERNEL_PATH) HAFNIUM_PATH=$(HAFNIUM_PATH) M=$(CURDIR) O=$(O) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) modules
+	make -C $(KERNEL_PATH) HAFNIUM_PATH=$(HAFNIUM_PATH) M=$(CURDIR) O=$(O) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) KBUILD_EXTRA_SYMBOLS=$(HAFNIUM_PATH)/driver/linux/Module.symvers modules
 
 clean:
 	make -C $(KERNEL_PATH) HAFNIUM_PATH=$(HAFNIUM_PATH) M=$(CURDIR) O=$(O) clean
@@ -45,3 +46,4 @@ checkpatch:
 	$(CHECKPATCH) -f main.c
 
 endif
+
