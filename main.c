@@ -191,6 +191,7 @@ static struct platform_driver hf_usr_driver = {
 	.probe = hf_usr_driver_probe,
 	.remove = hf_usr_driver_remove,
 };
+static struct ffa_memory_region mem_region;
 static void share_mem(void)
 {
 	ffa_vm_id_t target_vm = 0x8002;
@@ -223,16 +224,21 @@ static void share_mem(void)
 	memset(shared_pages, 'b', PAGE_SIZE * 2);
 
 	spin_lock_irqsave(&hf_send_lock, flags);
+	pr_info("recv id:%x\n",target_vm);
 
 	EXPECT_EQ(ffa_memory_region_init_single_receiver(
-			  mb.send, HF_MAILBOX_SIZE, current_vm_id, target_vm,
-			  constituents, ARRAY_SIZE(constituents), 0, 0,
-			  FFA_DATA_ACCESS_RW,
+
+			  &mem_region, HF_MAILBOX_SIZE, current_vm_id,
+			  target_vm, constituents, ARRAY_SIZE(constituents), 0,
+			  0, FFA_DATA_ACCESS_RW,
 			  FFA_INSTRUCTION_ACCESS_NOT_SPECIFIED,
 			  FFA_MEMORY_NORMAL_MEM, FFA_MEMORY_CACHE_WRITE_BACK,
 			  FFA_MEMORY_INNER_SHAREABLE, &total_length,
 			  &fragment_length),
 		  0);
+
+	memcpy(mb.send, &mem_region, total_length);
+	int access_count = mem_region.receiver_count;
 	pr_info("tot: %d frag:%d page:%d", total_length, fragment_length,
 		PAGE_SIZE);
 	/* Send the first fragment without the last constituent. */
@@ -262,20 +268,32 @@ static void share_mem(void)
 	EXPECT_EQ(ret.func, FFA_SUCCESS_32);
 	EXPECT_EQ(ffa_mem_success_handle(ret), handle);
 	pr_info("Got handle %#llx.\n", handle);
-	EXPECT_EQ(handle, 0);
 	EXPECT_NE(handle & FFA_MEMORY_HANDLE_ALLOCATOR_MASK,
 		  FFA_MEMORY_HANDLE_ALLOCATOR_HYPERVISOR);
-
 	spin_unlock_irqrestore(&hf_send_lock, flags);
+
 	/* Make sure we can still write to it. */
 	for (i = 0; i < PAGE_SIZE * 2; ++i) {
 		shared_pages[i] = i;
 	}
 	pr_info("finish share mem to vm: %u", 2);
 
+	pr_info("mem region size:%d %d\n", sizeof(struct ffa_memory_region),
+		access_count * sizeof(struct ffa_memory_access));
+
 	ffa_vm_id_t callee_id = target_vm;
-	struct ffa_value ret = ffa_msg_send_direct_req(current_vm_id, callee_id,
-						       handle, 0, 0, 0, 0);
+	pr_info("share mem tot len:%d\n", total_length);
+
+	memcpy(mb.send, &mem_region,
+	       sizeof(struct ffa_memory_region) +
+		       mem_region.receiver_count *
+			       sizeof(struct ffa_memory_access));
+	((struct ffa_memory_region *)mb.send)->handle = handle;
+	ret = ffa_msg_send(current_vm_id, callee_id,
+			   sizeof(struct ffa_memory_region), 0);
+	log_ret(ret);
+	ret = ffa_run_till_not_interrupt(callee_id, 0);
+	log_ret(ret);
 	/*if (ret.func == FFA_INTERRUPT_32) {
 		ret = ffa_run_till_not_interrupt(callee_id,
 						 ffa_vcpu_index(ret));
