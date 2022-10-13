@@ -89,7 +89,7 @@ static void run_vm(void)
 static void handle_input(void *input, size_t len)
 {
 	pr_info("read %u bit(s)", len);
-	struct hf_usr_protocol *req = input;
+	struct measure_req *req = input;
 	ffa_vm_id_t callee_id = req->vm_id;
 	struct ffa_value ret = ffa_msg_send_direct_req(current_vm_id, callee_id,
 						       23, 0, 0, 0, 0);
@@ -104,7 +104,7 @@ static void handle_input(void *input, size_t len)
 static ssize_t procfile_write(struct file *file, const char __user *buff,
 			      size_t len, loff_t *off)
 {
-	if (len != sizeof(struct hf_usr_protocol)) {
+	if (len != sizeof(struct measure_req)) {
 		return -EBADRQC;
 	}
 	void *input = kmalloc(len, GFP_KERNEL);
@@ -192,6 +192,8 @@ static struct platform_driver hf_usr_driver = {
 	.remove = hf_usr_driver_remove,
 };
 static struct ffa_memory_region mem_region;
+/// @brief 
+/// @param  
 static void share_mem(void)
 {
 	ffa_vm_id_t target_vm = 0x8002;
@@ -211,9 +213,9 @@ static void share_mem(void)
 	uint32_t fragment_length;
 
 	struct ffa_memory_region_constituent constituents[] = {
-		{.address = virt_to_phys((uint64_t)shared_pages),
+		{.address = __pa((uint64_t)shared_pages),
 		 .page_count = 1},
-		{.address = virt_to_phys((uint64_t)shared_pages + PAGE_SIZE),
+		{.address = __pa((uint64_t)shared_pages + PAGE_SIZE),
 		 .page_count = 1},
 	};
 	pr_info("%llx %llx %llx %llx\n", __pa((uint64_t)shared_pages),
@@ -224,10 +226,9 @@ static void share_mem(void)
 	memset(shared_pages, 'b', PAGE_SIZE * 2);
 
 	spin_lock_irqsave(&hf_send_lock, flags);
-	pr_info("recv id:%x\n",target_vm);
+	pr_info("recv id:%x\n", target_vm);
 
 	EXPECT_EQ(ffa_memory_region_init_single_receiver(
-
 			  &mem_region, HF_MAILBOX_SIZE, current_vm_id,
 			  target_vm, constituents, ARRAY_SIZE(constituents), 0,
 			  0, FFA_DATA_ACCESS_RW,
@@ -241,63 +242,29 @@ static void share_mem(void)
 	int access_count = mem_region.receiver_count;
 	pr_info("tot: %d frag:%d page:%d", total_length, fragment_length,
 		PAGE_SIZE);
-	/* Send the first fragment without the last constituent. */
-	fragment_length -= sizeof(struct ffa_memory_region_constituent);
 	ret = ffa_mem_share(total_length, fragment_length);
 	log_ret(ret);
-	EXPECT_EQ(ret.func, FFA_MEM_FRAG_RX_32);
-	EXPECT_EQ(ret.arg3, fragment_length);
-	pr_info("a1:%x, a2:%x %x %x", ret.arg1, (uint32_t)(ret.arg2),
-		ffa_frag_handle(ret), ffa_frag_handle(ret) >> 32);
+	EXPECT_EQ(ret.func, FFA_SUCCESS_32);
 	handle = ffa_frag_handle(ret);
 
 	pr_info("Got handle %#llx.\n", handle);
 
-	/* Send second fragment. */
-	EXPECT_EQ(
-		ffa_memory_fragment_init(mb.send, HF_MAILBOX_SIZE,
-					 constituents + 1, 1, &fragment_length),
-		0);
-	ret = ffa_mem_frag_tx(handle, fragment_length);
-	log_ret(ret);
-	while (ret.arg2 == FFA_RETRY) {
-		ret = ffa_mem_frag_tx(handle, fragment_length);
-		log_ret(ret);
-	}
-
-	EXPECT_EQ(ret.func, FFA_SUCCESS_32);
-	EXPECT_EQ(ffa_mem_success_handle(ret), handle);
-	pr_info("Got handle %#llx.\n", handle);
-	EXPECT_NE(handle & FFA_MEMORY_HANDLE_ALLOCATOR_MASK,
-		  FFA_MEMORY_HANDLE_ALLOCATOR_HYPERVISOR);
 	spin_unlock_irqrestore(&hf_send_lock, flags);
 
 	/* Make sure we can still write to it. */
-	for (i = 0; i < PAGE_SIZE * 2; ++i) {
-		shared_pages[i] = i;
-	}
-	pr_info("finish share mem to vm: %u", 2);
+	memset(shared_pages, 'c', PAGE_SIZE * 2);
 
 	pr_info("mem region size:%d %d\n", sizeof(struct ffa_memory_region),
 		access_count * sizeof(struct ffa_memory_access));
 
 	ffa_vm_id_t callee_id = target_vm;
-	pr_info("share mem tot len:%d\n", total_length);
 
-	memcpy(mb.send, &mem_region,
-	       sizeof(struct ffa_memory_region) +
-		       mem_region.receiver_count *
-			       sizeof(struct ffa_memory_access));
 	((struct ffa_memory_region *)mb.send)->handle = handle;
-	ret = ffa_msg_send(current_vm_id, callee_id,
-			   sizeof(struct ffa_memory_region), 0);
-	log_ret(ret);
-	ret = ffa_run_till_not_interrupt(callee_id, 0);
-	log_ret(ret);
-	/*if (ret.func == FFA_INTERRUPT_32) {
-		ret = ffa_run_till_not_interrupt(callee_id,
-						 ffa_vcpu_index(ret));
-	}*/
+	ret = ffa_msg_send_direct_req(current_vm_id, callee_id, handle, 0, 0, 0,
+				      0);
+	if (ret.func == FFA_INTERRUPT_32) {
+		ret = ffa_run_till_not_interrupt(callee_id, 0);
+	}
 	pr_info("vm %u ret with code: %x, %d", callee_id, ret.func, ret.arg2);
 }
 
